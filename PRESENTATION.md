@@ -4,7 +4,7 @@
 
 > *"From natural language to payment in seconds — AI that thinks, decides, and acts."*
 
-**Pine Labs AI Hackathon 2026** | Solo Developer
+**Pine Labs AI Hackathon 2026** | **Devanshu Dangi**
 
 ---
 
@@ -103,7 +103,7 @@ Developer writes reconciliation            → Decision → Payment → Summary
 - **Proactive Alerts** — Get notified about failures and anomalies before you ask
 - **Payment Link + QR** — Generates shareable payment links with QR codes rendered in chat
 
-### Solution Overview Diagram
+### Solution Overview — High-Level Flow
 
 ```mermaid
 graph LR
@@ -118,6 +118,32 @@ graph LR
     Dashboard -->|Live Charts| Charts["Activity Timeline"]
     Dashboard -->|Live Feed| Feed["Transaction Feed"]
     Dashboard -->|Alerts| Alerts["Proactive Alerts"]
+```
+
+### End-to-End Data Flow
+
+```mermaid
+flowchart TD
+    A["User types or speaks a request"] --> B["Frontend sends message via WebSocket /ws/chat"]
+    B --> C["Gateway receives message, appends to session history"]
+    C --> D["Gateway streams POST /agent/chat to Agent Service"]
+    D --> E["Agent fetches tool schemas from Pine Labs Service"]
+    E --> F["Agent sends conversation + tools to AWS Bedrock (Claude)"]
+    F --> G{"Claude decides next action"}
+    
+    G -->|Tool Use| H["Agent calls POST /tools/execute on Pine Labs Service"]
+    H --> I["Pine Labs Service calls Plural UAT API"]
+    I --> J["Result returned to Agent"]
+    J --> K["Agent streams tool_call + tool_result events back"]
+    K --> F
+    
+    G -->|Decision| L["Agent emits decision event with reasoning"]
+    L --> F
+    
+    G -->|Final Response| M["Agent streams response event"]
+    M --> N["Gateway forwards all events to Chat WebSocket"]
+    N --> O["Gateway broadcasts to Dashboard WebSocket /ws/dashboard"]
+    O --> P["Frontend updates Chat UI + Dashboard in real-time"]
 ```
 
 ---
@@ -141,6 +167,17 @@ A single sentence like *"Buy a laptop for ₹50,000"* triggers a **fully autonom
 | 7 | Deliver complete summary to user | *Response* |
 
 The user doesn't need to ask for each step. The agent **infers intent** and executes the entire pipeline autonomously.
+
+```mermaid
+flowchart LR
+    Intent["User Intent"] --> Auth["generate_token"]
+    Auth --> Offers["discover_offers"]
+    Offers --> Fees["calculate_convenience_fee (x2)"]
+    Fees --> Decision{"AI Decision Engine"}
+    Decision --> Order["create_order"]
+    Order --> Link["create_payment_link"]
+    Link --> Summary["Summary + QR Code"]
+```
 
 ### 4.2 Intelligent Decisioning Engine
 
@@ -201,6 +238,27 @@ When asked to reconcile, the agent autonomously:
 3. Cross-references **paid vs. settled vs. refunded**
 4. Reports mismatches with specific order IDs and amounts
 5. Provides **actionable suggestions** (e.g., "Order m03 has a payment link pending — resend to customer")
+
+```mermaid
+flowchart TD
+    Start["User: Reconcile transactions"] --> Fetch["Fetch settlements (get_settlements)"]
+    Fetch --> Status["Query order statuses (get_order_status)"]
+    Status --> Cross{"Cross-reference"}
+    
+    Cross --> Paid["Paid Orders"]
+    Cross --> Unpaid["Unpaid Orders"]
+    Cross --> Settled["Settled"]
+    Cross --> Unsettled["Unsettled"]
+    Cross --> Refunded["Refunded"]
+    
+    Paid --> Report["Reconciliation Report"]
+    Unpaid --> Report
+    Settled --> Report
+    Unsettled --> Report
+    Refunded --> Report
+    
+    Report --> Mismatches["Flag Mismatches + Actionable Suggestions"]
+```
 
 **Example Output:**
 
@@ -331,6 +389,52 @@ graph TB
     PineClient -->|REST API| PluralAPI
     AlertEngine -->|Broadcasts| WSHandler
     ToolLoop -->|Fetches Schemas| ToolDefs
+```
+
+### Event Streaming Architecture
+
+```mermaid
+flowchart LR
+    subgraph AgentSvc ["Agent Service"]
+        Loop["Tool-Use Loop"]
+    end
+    
+    subgraph Events ["Streamed NDJSON Events"]
+        E1["workflow_step"]
+        E2["tool_call"]
+        E3["tool_result"]
+        E4["decision"]
+        E5["response"]
+    end
+    
+    subgraph GatewaySvc ["Gateway"]
+        Router["Event Router"]
+        AlertEng["Alert Engine"]
+    end
+    
+    subgraph FrontendClients ["Frontend Clients"]
+        WS1["/ws/chat"]
+        WS2["/ws/dashboard"]
+    end
+    
+    Loop --> E1 & E2 & E3 & E4 & E5
+    E1 & E2 & E3 & E4 & E5 --> Router
+    Router --> WS1
+    Router --> WS2
+    AlertEng -->|Proactive Alerts| WS1
+    AlertEng -->|Proactive Alerts| WS2
+```
+
+### Proactive Alert Flow
+
+```mermaid
+flowchart TD
+    Scan["Background Task: Scan activity log every 30s"] --> Check{"Detect anomalies?"}
+    Check -->|"3+ failures"| Warn["Push WARNING alert to all clients"]
+    Check -->|"Unpaid orders"| Info["Push INFO alert with order details"]
+    Check -->|"No issues"| Sleep["Sleep 30s, repeat"]
+    Warn --> Sleep
+    Info --> Sleep
 ```
 
 ### Tech Stack
@@ -621,6 +725,6 @@ graph LR
 
 ---
 
-**Pine Labs AI Hackathon 2026**
+**Devanshu Dangi** | **Pine Labs AI Hackathon 2026**
 
 *Thank you for your time. Questions?*
