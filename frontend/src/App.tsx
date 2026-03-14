@@ -3,14 +3,15 @@ import { Zap, LayoutDashboard } from 'lucide-react';
 import ChatPanel from './components/Chat/ChatPanel';
 import DashboardPanel from './components/Dashboard/DashboardPanel';
 import { useWebSocket } from './hooks/useWebSocket';
+import { SEED_ACTIVITIES, SEED_WORKFLOW_STEPS } from './lib/seedData';
 import type { ActivityEntry, WorkflowStep } from './lib/types';
 import type { WSMessage } from './hooks/useWebSocket';
 
 export default function App() {
   const chatWS = useWebSocket('/ws/chat');
   const dashWS = useWebSocket('/ws/dashboard');
-  const [activities, setActivities] = useState<ActivityEntry[]>([]);
-  const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
+  const [activities, setActivities] = useState<ActivityEntry[]>(SEED_ACTIVITIES);
+  const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>(SEED_WORKFLOW_STEPS);
   const [dashboardOpen, setDashboardOpen] = useState(false);
   const [splitPercent, setSplitPercent] = useState(50);
   const dragging = useRef(false);

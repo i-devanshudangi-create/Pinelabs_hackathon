@@ -22,20 +22,29 @@ const tooltipStyle = {
 
 export default function Charts({ activities }: Props) {
   const toolCounts: Record<string, number> = {};
-  const timeline: { time: string; calls: number }[] = [];
-  const timeMap: Record<string, number> = {};
+
+  const bucketLabels = [
+    '9:30', '10:00', '10:30', '11:00', '11:30',
+    '12:00', '12:30', '13:00', '13:30', '14:00',
+    '14:30', '15:00', '15:30',
+  ];
+  const bucketCounts: Record<string, number> = {};
+  for (const l of bucketLabels) bucketCounts[l] = 0;
 
   for (const a of activities) {
     if (a.event === 'tool_call') {
       toolCounts[a.tool_name] = (toolCounts[a.tool_name] || 0) + 1;
-      const t = new Date(a.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-      timeMap[t] = (timeMap[t] || 0) + 1;
+      const d = new Date(a.timestamp);
+      const h = d.getHours();
+      const m = d.getMinutes();
+      const key = `${h}:${m < 30 ? '00' : '30'}`;
+      if (bucketCounts[key] !== undefined) {
+        bucketCounts[key]++;
+      }
     }
   }
 
-  for (const [time, calls] of Object.entries(timeMap)) {
-    timeline.push({ time, calls });
-  }
+  const timeline = bucketLabels.map((time) => ({ time, calls: bucketCounts[time] }));
 
   const pieData = Object.entries(toolCounts)
     .map(([name, value]) => ({ name: name.replace(/_/g, ' '), value }))
