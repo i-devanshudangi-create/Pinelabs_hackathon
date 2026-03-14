@@ -17,24 +17,28 @@ const CARDS = [
 
 export default function StatsCards({ stats }: Props) {
   return (
-    <div className="grid grid-cols-4 gap-2.5">
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, 1fr)', gap: '12px' }}>
       {CARDS.map(({ key, label, icon: Icon, color, gradient }) => {
         const value = stats[key] || 0;
         return (
           <div
             key={key}
-            className="rounded-2xl p-3.5 transition-all hover:scale-[1.03] cursor-default"
-            style={{ background: gradient, border: `1px solid ${color}15` }}
+            style={{
+              borderRadius: '14px',
+              padding: '14px 16px',
+              background: gradient,
+              border: `1px solid ${color}15`,
+            }}
           >
-            <div className="flex items-center justify-between mb-2.5">
-              <span className="text-[11px] font-medium uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '8px' }}>
+              <span style={{ fontSize: '11px', fontWeight: 500, textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-secondary)' }}>
                 {label}
               </span>
-              <div className="w-7 h-7 rounded-lg flex items-center justify-center" style={{ background: `${color}18` }}>
+              <div style={{ width: '28px', height: '28px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center', background: `${color}18` }}>
                 <Icon size={13} style={{ color }} />
               </div>
             </div>
-            <div className="text-2xl font-bold tracking-tight" style={{ color }}>
+            <div style={{ fontSize: '22px', fontWeight: 700, letterSpacing: '-0.02em', color }}>
               {value}
             </div>
           </div>

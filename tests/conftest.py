@@ -62,4 +62,6 @@ EXPECTED_TOOLS = [
     "manage_subscription",
     "calculate_convenience_fee",
     "currency_conversion",
+    "reconcile_transactions",
+    "analyze_activity",
 ]

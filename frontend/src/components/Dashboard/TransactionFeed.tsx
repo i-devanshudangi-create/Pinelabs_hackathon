@@ -89,7 +89,7 @@ export default function TransactionFeed({ activities }: Props) {
           </span>
         )}
       </div>
-      <div className="max-h-[280px] overflow-y-auto">
+      <div>
         {txns.length === 0 ? (
           <div className="px-4 py-10 text-center text-xs" style={{ color: 'var(--text-muted)' }}>
             Transactions appear as the agent processes them

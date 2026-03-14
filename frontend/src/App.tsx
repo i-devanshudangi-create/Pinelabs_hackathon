@@ -1,16 +1,20 @@
-import { useState, useCallback, useEffect } from 'react';
-import { Zap, LayoutDashboard, X } from 'lucide-react';
+import { useState, useCallback, useEffect, useRef } from 'react';
+import { Zap, LayoutDashboard } from 'lucide-react';
 import ChatPanel from './components/Chat/ChatPanel';
 import DashboardPanel from './components/Dashboard/DashboardPanel';
 import { useWebSocket } from './hooks/useWebSocket';
-import type { ActivityEntry } from './lib/types';
+import type { ActivityEntry, WorkflowStep } from './lib/types';
 import type { WSMessage } from './hooks/useWebSocket';
 
 export default function App() {
   const chatWS = useWebSocket('/ws/chat');
   const dashWS = useWebSocket('/ws/dashboard');
   const [activities, setActivities] = useState<ActivityEntry[]>([]);
+  const [workflowSteps, setWorkflowSteps] = useState<WorkflowStep[]>([]);
   const [dashboardOpen, setDashboardOpen] = useState(false);
+  const [splitPercent, setSplitPercent] = useState(50);
+  const dragging = useRef(false);
+  const chatPanelRef = useRef<{ injectMessage: (msg: string) => void }>(null);
 
   const handleToolEvent = useCallback((eventData: any) => {
     const entry: ActivityEntry = {
@@ -23,98 +27,194 @@ export default function App() {
     setActivities((prev) => [...prev, entry]);
   }, []);
 
+  const handleWorkflowStep = useCallback((step: WorkflowStep) => {
+    setWorkflowSteps((prev) => {
+      const existing = prev.findIndex(
+        (s) => s.workflow_id === step.workflow_id && s.step_index === step.step_index
+      );
+      if (existing >= 0) {
+        const updated = [...prev];
+        updated[existing] = step;
+        return updated;
+      }
+      return [...prev, step];
+    });
+  }, []);
+
+  const handleAskAgent = useCallback((message: string) => {
+    chatPanelRef.current?.injectMessage(message);
+  }, []);
+
   useEffect(() => {
     const unsub = dashWS.addListener((msg: WSMessage) => {
       if (msg.type === 'dashboard_event' && msg.data) {
-        setActivities((prev) => [...prev, msg.data as ActivityEntry]);
+        if (msg.data.event === 'workflow_step') {
+          handleWorkflowStep(msg.data as unknown as WorkflowStep);
+        } else {
+          setActivities((prev) => [...prev, msg.data as ActivityEntry]);
+        }
       }
     });
     return unsub;
-  }, [dashWS.addListener]);
+  }, [dashWS.addListener, handleWorkflowStep]);
+
+  const onDividerMouseDown = useCallback(() => {
+    dragging.current = true;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+  }, []);
+
+  useEffect(() => {
+    const onMouseMove = (e: MouseEvent) => {
+      if (!dragging.current) return;
+      const pct = (e.clientX / window.innerWidth) * 100;
+      setSplitPercent(Math.min(80, Math.max(25, pct)));
+    };
+    const onMouseUp = () => {
+      if (!dragging.current) return;
+      dragging.current = false;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+    window.addEventListener('mousemove', onMouseMove);
+    window.addEventListener('mouseup', onMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', onMouseMove);
+      window.removeEventListener('mouseup', onMouseUp);
+    };
+  }, []);
 
   return (
-    <div className="flex flex-col h-screen" style={{ background: 'var(--bg-primary)' }}>
-      {/* Top Bar */}
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', background: 'var(--bg-primary)' }}>
+      {/* Header */}
       <header
-        className="shrink-0 flex items-center justify-between px-6 h-12"
-        style={{ background: 'var(--bg-secondary)', borderBottom: '1px solid var(--border)' }}
+        style={{
+          flexShrink: 0,
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          padding: '0 32px',
+          height: '56px',
+          background: 'var(--bg-secondary)',
+          borderBottom: '1px solid var(--border)',
+        }}
       >
-        <div className="flex items-center gap-2.5">
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
           <div
-            className="w-7 h-7 rounded-lg flex items-center justify-center"
-            style={{ background: 'var(--gradient-accent)' }}
+            style={{
+              width: '32px',
+              height: '32px',
+              borderRadius: '8px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              background: 'var(--gradient-accent)',
+            }}
           >
-            <Zap size={14} color="#fff" />
+            <Zap size={16} color="#fff" />
           </div>
-          <span className="font-semibold text-sm tracking-tight">PlurAgent</span>
+          <span style={{ fontWeight: 600, fontSize: '15px', letterSpacing: '-0.01em' }}>PlurAgent</span>
           <span
-            className="text-xs px-2 py-0.5 rounded-full"
-            style={{ background: 'var(--accent-glow)', color: 'var(--accent-light)' }}
+            style={{
+              fontSize: '11px',
+              padding: '2px 10px',
+              borderRadius: '100px',
+              background: 'var(--accent-glow)',
+              color: 'var(--accent-light)',
+            }}
           >
-            v1.0
+            v2.0
           </span>
         </div>
 
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-1.5">
-            <div className="w-1.5 h-1.5 rounded-full animate-pulse-ring" style={{ background: 'var(--success)' }} />
-            <span className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div className="animate-pulse-ring" style={{ width: '8px', height: '8px', borderRadius: '50%', background: 'var(--success)' }} />
+            <span style={{ fontSize: '13px', color: 'var(--text-secondary)' }}>
               {chatWS.connected ? 'Live' : 'Connecting...'}
             </span>
           </div>
 
           <button
             onClick={() => setDashboardOpen((o) => !o)}
-            className="flex items-center gap-2 px-3 py-1.5 rounded-lg text-xs font-medium transition-all duration-200 cursor-pointer"
             style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '8px 16px',
+              borderRadius: '8px',
+              fontSize: '13px',
+              fontWeight: 500,
+              cursor: 'pointer',
+              transition: 'all 0.2s',
               background: dashboardOpen ? 'var(--accent-glow)' : 'var(--bg-card)',
               border: `1px solid ${dashboardOpen ? 'var(--accent)' : 'var(--border)'}`,
               color: dashboardOpen ? 'var(--accent-light)' : 'var(--text-secondary)',
             }}
           >
-            <LayoutDashboard size={14} />
+            <LayoutDashboard size={15} />
             Dashboard
           </button>
         </div>
       </header>
 
-      {/* Full-width Chat */}
-      <div className="flex-1 min-h-0">
-        <ChatPanel
-          connected={chatWS.connected}
-          sendWS={chatWS.send}
-          addListener={chatWS.addListener}
-          onToolEvent={handleToolEvent}
-        />
-      </div>
+      {/* Main content */}
+      <div style={{ flex: 1, display: 'flex', minHeight: 0 }}>
+        {/* Chat panel */}
+        <div style={{ width: dashboardOpen ? `${splitPercent}%` : '100%', height: '100%', transition: dragging.current ? 'none' : 'width 0.3s ease' }}>
+          <ChatPanel
+            ref={chatPanelRef}
+            connected={chatWS.connected}
+            sendWS={chatWS.send}
+            addListener={chatWS.addListener}
+            onToolEvent={handleToolEvent}
+            onWorkflowStep={handleWorkflowStep}
+          />
+        </div>
 
-      {/* Dashboard Drawer Backdrop */}
-      <div
-        className={`drawer-backdrop ${dashboardOpen ? 'open' : ''}`}
-        onClick={() => setDashboardOpen(false)}
-      />
-
-      {/* Dashboard Drawer */}
-      <div className={`drawer-panel ${dashboardOpen ? 'open' : ''}`}>
-        <div
-          className="flex items-center justify-between px-5 h-12 shrink-0"
-          style={{ borderBottom: '1px solid var(--border)' }}
-        >
-          <div className="flex items-center gap-2">
-            <LayoutDashboard size={15} style={{ color: 'var(--accent-light)' }} />
-            <span className="font-semibold text-sm">Dashboard</span>
-          </div>
-          <button
-            onClick={() => setDashboardOpen(false)}
-            className="w-7 h-7 rounded-lg flex items-center justify-center transition-colors cursor-pointer"
-            style={{ background: 'var(--bg-card)', border: '1px solid var(--border)', color: 'var(--text-secondary)' }}
+        {/* Resizable divider */}
+        {dashboardOpen && (
+          <div
+            onMouseDown={onDividerMouseDown}
+            style={{
+              width: '6px',
+              cursor: 'col-resize',
+              background: 'var(--border)',
+              position: 'relative',
+              flexShrink: 0,
+              transition: 'background 0.15s',
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'var(--accent)'; }}
+            onMouseLeave={(e) => { if (!dragging.current) (e.currentTarget as HTMLElement).style.background = 'var(--border)'; }}
           >
-            <X size={14} />
-          </button>
-        </div>
-        <div className="flex-1 min-h-0 overflow-y-auto">
-          <DashboardPanel activities={activities} />
-        </div>
+            <div
+              style={{
+                position: 'absolute',
+                top: '50%',
+                left: '50%',
+                transform: 'translate(-50%, -50%)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: '3px',
+              }}
+            >
+              {[0, 1, 2].map((i) => (
+                <div key={i} style={{ width: '3px', height: '3px', borderRadius: '50%', background: 'var(--text-muted)' }} />
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Dashboard panel */}
+        {dashboardOpen && (
+          <div style={{ flex: 1, height: '100%', overflow: 'hidden' }}>
+            <DashboardPanel
+              activities={activities}
+              workflowSteps={workflowSteps}
+              onAskAgent={handleAskAgent}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

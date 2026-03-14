@@ -18,11 +18,11 @@ async def test_health(pinelabs_client):
 # ── Tool Definitions ────────────────────────────────────────────────
 
 
-async def test_definitions_returns_all_12_tools(pinelabs_client):
+async def test_definitions_returns_all_14_tools(pinelabs_client):
     resp = await pinelabs_client.get("/tools/definitions")
     assert resp.status_code == 200
     tools = resp.json()["tools"]
-    assert len(tools) == 12
+    assert len(tools) == 14
 
 
 async def test_definitions_contains_expected_tool_names(pinelabs_client):

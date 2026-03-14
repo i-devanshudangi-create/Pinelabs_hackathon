@@ -3,10 +3,15 @@ import StatsCards from './StatsCards';
 import AgentActivityLog from './AgentActivityLog';
 import TransactionFeed from './TransactionFeed';
 import Charts from './Charts';
-import type { ActivityEntry } from '../../lib/types';
+import WorkflowPipeline from './WorkflowPipeline';
+import InsightCards from './InsightCards';
+import ReconciliationMatrix from './ReconciliationMatrix';
+import type { ActivityEntry, WorkflowStep } from '../../lib/types';
 
 interface Props {
   activities: ActivityEntry[];
+  workflowSteps: WorkflowStep[];
+  onAskAgent?: (message: string) => void;
 }
 
 function computeStats(activities: ActivityEntry[]): Record<string, number> {
@@ -29,34 +34,42 @@ function computeStats(activities: ActivityEntry[]): Record<string, number> {
   return stats;
 }
 
-export default function DashboardPanel({ activities }: Props) {
+export default function DashboardPanel({ activities, workflowSteps, onAskAgent }: Props) {
   const stats = computeStats(activities);
   const totalCalls = activities.filter(a => a.event === 'tool_call').length;
 
   return (
-    <div className="flex flex-col h-full overflow-hidden" style={{ background: 'var(--bg-primary)' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden', background: 'var(--bg-primary)' }}>
       {/* Header */}
       <div
-        className="flex items-center gap-3 px-6 h-12 shrink-0"
-        style={{ borderBottom: '1px solid var(--border)' }}
+        style={{
+          display: 'flex',
+          alignItems: 'center',
+          gap: '12px',
+          padding: '0 20px',
+          height: '48px',
+          flexShrink: 0,
+          borderBottom: '1px solid var(--border)',
+        }}
       >
         <LayoutDashboard size={15} style={{ color: 'var(--accent-light)' }} />
-        <span className="text-sm font-semibold">Dashboard</span>
-        <div className="ml-auto flex items-center gap-3">
-          <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg" style={{ background: 'var(--accent-glow)' }}>
-            <Radio size={10} style={{ color: 'var(--accent-light)' }} />
-            <span className="text-[10px] font-medium" style={{ color: 'var(--accent-light)' }}>
-              {totalCalls} API calls
-            </span>
-          </div>
+        <span style={{ fontSize: '14px', fontWeight: 600 }}>Dashboard</span>
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '6px', padding: '4px 10px', borderRadius: '8px', background: 'var(--accent-glow)' }}>
+          <Radio size={10} style={{ color: 'var(--accent-light)' }} />
+          <span style={{ fontSize: '10px', fontWeight: 500, color: 'var(--accent-light)' }}>
+            {totalCalls} API calls
+          </span>
         </div>
       </div>
 
-      {/* Content */}
-      <div className="flex-1 overflow-y-auto px-5 py-4 space-y-3">
-        <StatsCards stats={stats} />
-        <Charts activities={activities} />
-        <div className="grid grid-cols-2 gap-2.5">
+      {/* Scrollable content */}
+      <div style={{ flex: 1, overflowY: 'auto', padding: '20px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+          <WorkflowPipeline steps={workflowSteps} />
+          <InsightCards activities={activities} onAskAgent={onAskAgent} />
+          <StatsCards stats={stats} />
+          <Charts activities={activities} />
+          <ReconciliationMatrix activities={activities} />
           <TransactionFeed activities={activities} />
           <AgentActivityLog activities={activities} />
         </div>

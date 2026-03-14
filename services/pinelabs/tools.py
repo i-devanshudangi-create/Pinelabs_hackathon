@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import uuid
 
-from config import PINE_LABS_CLIENT_ID, PINE_LABS_CLIENT_SECRET
+from config import PINE_LABS_CLIENT_ID, PINE_LABS_CLIENT_SECRET, PINE_LABS_MID
 from pine_client import api_post, api_get, cache_token
 
 
@@ -132,7 +132,34 @@ async def create_payment_link(**kwargs) -> dict:
             body["customer"]["mobile_number"] = kwargs["customer_phone"]
     if kwargs.get("expiry_minutes"):
         body["expiry_in_minutes"] = kwargs["expiry_minutes"]
-    return await api_post("/pay/v1/payment-links", body)
+    result = await api_post("/pay/v1/payment-links", body)
+
+    url = (result.get("payment_link_url")
+           or result.get("data", {}).get("payment_link_url")
+           or result.get("url")
+           or result.get("data", {}).get("url"))
+    if url:
+        result["payment_url"] = url
+        return result
+
+    # Fallback: construct the Pine Labs checkout URL from an order
+    order_result = await api_post("/pay/v1/orders", {
+        "merchant_order_reference": body["merchant_payment_link_reference"],
+        "order_amount": body["payment_link_amount"],
+    })
+    order_id = order_result.get("data", {}).get("order_id", "")
+    mid = PINE_LABS_MID or "121524"
+    if order_id:
+        checkout_url = f"https://pci.pluralonline.com/pay/{mid}/{order_id}"
+        return {
+            "success": True,
+            "order_id": order_id,
+            "payment_url": checkout_url,
+            "description": body["description"],
+            "amount": kwargs["amount"],
+            "currency": kwargs.get("currency", "INR"),
+        }
+    return result
 
 
 async def manage_subscription(**kwargs) -> dict:
@@ -177,6 +204,125 @@ async def currency_conversion(**kwargs) -> dict:
     return await api_post("/pay/v1/international/currency-conversion", body)
 
 
+async def reconcile_transactions(**kwargs) -> dict:
+    """Cross-reference recent orders, payments, and settlements to find mismatches."""
+    report = {
+        "total_orders": 0, "paid_orders": 0, "unpaid_orders": 0,
+        "settled": 0, "unsettled": 0, "refunded": 0,
+        "mismatches": [], "summary": "",
+    }
+    try:
+        settlements = await get_settlements()
+        settlement_list = settlements.get("data", []) if isinstance(settlements.get("data"), list) else []
+        report["settled"] = len(settlement_list)
+
+        settled_order_ids = set()
+        for s in settlement_list:
+            oid = s.get("order_id", "")
+            if oid:
+                settled_order_ids.add(oid)
+
+        order_ids = kwargs.get("order_ids", [])
+        for oid in order_ids:
+            try:
+                order = await get_order_status(order_id=oid)
+                order_data = order.get("data", order)
+                status = order_data.get("status", "UNKNOWN")
+                report["total_orders"] += 1
+
+                payments = order_data.get("payments", [])
+                has_payment = any(p.get("status") == "PROCESSED" for p in payments)
+                has_refund = any(p.get("refund_status") == "REFUNDED" for p in payments)
+
+                if has_payment:
+                    report["paid_orders"] += 1
+                else:
+                    report["unpaid_orders"] += 1
+
+                if has_refund:
+                    report["refunded"] += 1
+
+                if has_payment and oid not in settled_order_ids:
+                    report["mismatches"].append({
+                        "order_id": oid, "type": "PAID_NOT_SETTLED",
+                        "message": f"Order {oid} is paid but not yet settled.",
+                    })
+
+                if status == "CREATED" and not has_payment:
+                    report["mismatches"].append({
+                        "order_id": oid, "type": "CREATED_NOT_PAID",
+                        "message": f"Order {oid} was created but has no payment.",
+                    })
+            except Exception as e:
+                report["mismatches"].append({"order_id": oid, "type": "ERROR", "message": str(e)})
+
+        report["unsettled"] = report["paid_orders"] - report["settled"]
+        total_mismatches = len(report["mismatches"])
+        if total_mismatches == 0:
+            report["summary"] = f"All {report['total_orders']} orders are healthy. No mismatches found."
+        else:
+            report["summary"] = f"Found {total_mismatches} mismatch(es) across {report['total_orders']} orders."
+
+    except Exception as e:
+        report["summary"] = f"Reconciliation encountered an error: {e}"
+        report["mismatches"].append({"type": "SYSTEM_ERROR", "message": str(e)})
+
+    return report
+
+
+async def analyze_activity(**kwargs) -> dict:
+    """Analyze provided activity data for patterns, failure rates, and insights."""
+    activities = kwargs.get("activities", [])
+    query = kwargs.get("query", "general")
+
+    total_calls = len([a for a in activities if a.get("event") == "tool_call"])
+    total_results = len([a for a in activities if a.get("event") == "tool_result"])
+
+    tool_counts: dict[str, int] = {}
+    failures: list[dict] = []
+    methods_used: dict[str, int] = {}
+
+    for a in activities:
+        name = a.get("tool_name", "unknown")
+        if a.get("event") == "tool_call":
+            tool_counts[name] = tool_counts.get(name, 0) + 1
+            if name == "create_payment":
+                method = a.get("tool_input", {}).get("payment_method", "UNKNOWN")
+                methods_used[method] = methods_used.get(method, 0) + 1
+        if a.get("event") == "tool_result":
+            result = a.get("tool_result", {})
+            if result.get("error") or result.get("success") is False:
+                failures.append({"tool": name, "error": str(result.get("error", "unknown"))})
+
+    failure_rate = (len(failures) / total_results * 100) if total_results > 0 else 0
+    most_used = max(tool_counts, key=tool_counts.get) if tool_counts else "none"
+    popular_method = max(methods_used, key=methods_used.get) if methods_used else "none"
+
+    insights = []
+    if failure_rate > 30:
+        insights.append({"severity": "danger", "message": f"High failure rate: {failure_rate:.0f}% of API calls failed."})
+    elif failure_rate > 10:
+        insights.append({"severity": "warning", "message": f"Elevated failure rate: {failure_rate:.0f}%."})
+    else:
+        insights.append({"severity": "info", "message": f"Healthy failure rate: {failure_rate:.0f}%."})
+
+    if popular_method != "none":
+        insights.append({"severity": "info", "message": f"Most popular payment method: {popular_method}."})
+
+    insights.append({"severity": "info", "message": f"Most called API: {most_used} ({tool_counts.get(most_used, 0)} calls)."})
+
+    return {
+        "total_api_calls": total_calls,
+        "total_results": total_results,
+        "failure_rate": round(failure_rate, 1),
+        "failures": failures[:10],
+        "tool_breakdown": tool_counts,
+        "payment_methods": methods_used,
+        "insights": insights,
+        "query": query,
+    }
+
+
 # ── Registry & definitions ──────────────────────────────────────────
 
 TOOL_REGISTRY: dict[str, callable] = {
@@ -192,6 +338,8 @@ TOOL_REGISTRY: dict[str, callable] = {
     "manage_subscription": manage_subscription,
     "calculate_convenience_fee": calculate_convenience_fee,
     "currency_conversion": currency_conversion,
+    "reconcile_transactions": reconcile_transactions,
+    "analyze_activity": analyze_activity,
 }
 
 TOOL_DEFINITIONS = [
@@ -359,6 +507,37 @@ TOOL_DEFINITIONS = [
                 "target_currency": {"type": "string", "description": "Target currency code (e.g. USD, EUR)"},
             },
             "required": ["amount", "source_currency", "target_currency"],
+        },
+    },
+    {
+        "name": "reconcile_transactions",
+        "description": "Cross-reference orders, payments, and settlements to find mismatches. Provide a list of order_ids to check. Returns a reconciliation report with matched, unmatched, and problematic transactions.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "order_ids": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "List of Pine Labs order IDs to reconcile",
+                },
+            },
+            "required": [],
+        },
+    },
+    {
+        "name": "analyze_activity",
+        "description": "Analyze transaction activity for patterns, failure rates, popular payment methods, and generate insights. Pass the recent activity data and an optional query.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "description": "What to analyze: 'general', 'failures', 'methods', 'trends'"},
+                "activities": {
+                    "type": "array",
+                    "items": {"type": "object"},
+                    "description": "Array of activity entries with event, tool_name, tool_input, tool_result, timestamp",
+                },
+            },
+            "required": ["query"],
         },
     },
 ]

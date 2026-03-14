@@ -83,7 +83,7 @@ async def test_concurrent_definitions_requests():
         results = await asyncio.gather(*tasks)
     for r in results:
         assert r.status_code == 200
-        assert len(r.json()["tools"]) == 12
+        assert len(r.json()["tools"]) == 14
 
 
 async def test_concurrent_health_checks():

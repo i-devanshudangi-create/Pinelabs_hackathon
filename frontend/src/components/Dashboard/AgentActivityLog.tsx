@@ -18,6 +18,8 @@ const TOOL_COLORS: Record<string, string> = {
   manage_subscription: '#67e8f9',
   calculate_convenience_fee: '#fcd34d',
   currency_conversion: '#6ee7b7',
+  reconcile_transactions: '#60a5fa',
+  analyze_activity: '#a78bfa',
 };
 
 const TOOL_SHORT: Record<string, string> = {
@@ -33,6 +35,8 @@ const TOOL_SHORT: Record<string, string> = {
   manage_subscription: 'Subscription',
   calculate_convenience_fee: 'Fees',
   currency_conversion: 'FX',
+  reconcile_transactions: 'Recon',
+  analyze_activity: 'Analyze',
 };
 
 export default function AgentActivityLog({ activities }: Props) {
@@ -48,7 +52,7 @@ export default function AgentActivityLog({ activities }: Props) {
           <span className="text-[10px] font-medium" style={{ color: 'var(--success)' }}>Live</span>
         </div>
       </div>
-      <div className="max-h-[280px] overflow-y-auto">
+      <div>
         {recent.length === 0 ? (
           <div className="px-4 py-10 text-center text-xs" style={{ color: 'var(--text-muted)' }}>
             Start chatting to see agent activity

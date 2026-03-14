@@ -1,9 +1,11 @@
 """Gateway Service: HTTP + WebSocket entry point for the frontend."""
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import sys
+import time
 from contextlib import asynccontextmanager
 
 import httpx
@@ -19,12 +21,19 @@ logger = logging.getLogger(__name__)
 conversations: dict[str, list[dict]] = {}
 activity_log: list[dict] = []
 dashboard_connections: list[WebSocket] = []
+chat_connections: list[WebSocket] = []
+
+last_alert_times: dict[str, float] = {}
+last_alert_fingerprints: dict[str, str] = {}
+ALERT_COOLDOWN = 300
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Gateway starting up")
+    task = asyncio.create_task(_proactive_alert_loop())
     yield
+    task.cancel()
     logger.info("Gateway shutting down")
 
 
@@ -48,6 +57,9 @@ class ChatResponse(BaseModel):
     response: str
     tool_calls: list[dict]
     session_id: str
+
+
+FORWARDED_EVENT_TYPES = {"tool_call", "tool_result", "decision", "workflow_step", "response", "error"}
 
 
 # ── REST endpoints ──────────────────────────────────────────────────
@@ -98,6 +110,7 @@ async def clear_session(session_id: str):
 async def ws_chat(ws: WebSocket):
     await ws.accept()
     session_id = "ws-default"
+    chat_connections.append(ws)
     logger.info("Chat WebSocket connected")
 
     try:
@@ -130,6 +143,9 @@ async def ws_chat(ws: WebSocket):
                                 activity_log.append(entry)
                                 await _broadcast_dashboard(entry)
 
+                            if event["type"] in ("decision", "workflow_step"):
+                                await _broadcast_dashboard({"event": event["type"], **event["data"]})
+
                             if event["type"] == "response":
                                 conversations[session_id].append({
                                     "role": "assistant",
@@ -148,6 +164,9 @@ async def ws_chat(ws: WebSocket):
             await ws.send_text(json.dumps({"type": "error", "data": {"message": str(e)}}))
         except Exception:
             pass
+    finally:
+        if ws in chat_connections:
+            chat_connections.remove(ws)
 
 
 # ── WebSocket: Dashboard ────────────────────────────────────────────
@@ -175,6 +194,94 @@ async def _broadcast_dashboard(event: dict):
             dead.append(ws)
     for ws in dead:
         dashboard_connections.remove(ws)
+
+
+async def _broadcast_chat_alert(alert: dict):
+    """Send a proactive alert to all connected chat WebSocket clients."""
+    dead = []
+    payload = json.dumps({"type": "proactive_alert", "data": alert})
+    for ws in chat_connections:
+        try:
+            await ws.send_text(payload)
+        except Exception:
+            dead.append(ws)
+    for ws in dead:
+        chat_connections.remove(ws)
+
+
+# ── Proactive Alert Engine ──────────────────────────────────────────
+
+
+async def _proactive_alert_loop():
+    """Background task that periodically analyzes activity_log and pushes alerts."""
+    await asyncio.sleep(15)
+    while True:
+        try:
+            await _check_and_alert()
+        except Exception:
+            logger.exception("Proactive alert error")
+        await asyncio.sleep(30)
+
+
+async def _check_and_alert():
+    now = time.time()
+    if len(activity_log) < 3:
+        return
+
+    recent = activity_log[-30:]
+
+    recent_failures = [
+        a for a in recent
+        if a.get("event") == "tool_result"
+        and (a.get("tool_result", {}).get("error") or a.get("tool_result", {}).get("success") is False)
+    ]
+    fail_fp = f"failures:{len(recent_failures)}"
+    if (
+        len(recent_failures) >= 2
+        and now - last_alert_times.get("failures", 0) > ALERT_COOLDOWN
+        and last_alert_fingerprints.get("failures") != fail_fp
+    ):
+        last_alert_times["failures"] = now
+        last_alert_fingerprints["failures"] = fail_fp
+        await _broadcast_chat_alert({
+            "severity": "warning",
+            "title": "Multiple Failures Detected",
+            "message": f"{len(recent_failures)} API calls failed recently. The most common failing tool is '{recent_failures[-1].get('tool_name', 'unknown')}'.",
+            "suggested_action": "Can you investigate the recent failures and suggest fixes?",
+        })
+
+    pending_orders = [
+        a for a in recent
+        if a.get("event") == "tool_result" and a.get("tool_name") == "create_order"
+        and not a.get("tool_result", {}).get("error")
+    ]
+    paid_order_ids = set()
+    for a in recent:
+        if a.get("tool_name") == "create_payment" and a.get("event") == "tool_result":
+            result = a.get("tool_result", {})
+            if not result.get("error"):
+                oid = a.get("tool_input", {}).get("order_id", "")
+                if oid:
+                    paid_order_ids.add(oid)
+
+    unpaid = [
+        o for o in pending_orders
+        if o.get("tool_result", {}).get("data", {}).get("id", "") not in paid_order_ids
+    ]
+    unpaid_fp = f"unpaid:{len(unpaid)}"
+    if (
+        len(unpaid) >= 2
+        and now - last_alert_times.get("unpaid", 0) > ALERT_COOLDOWN
+        and last_alert_fingerprints.get("unpaid") != unpaid_fp
+    ):
+        last_alert_times["unpaid"] = now
+        last_alert_fingerprints["unpaid"] = unpaid_fp
+        await _broadcast_chat_alert({
+            "severity": "info",
+            "title": "Unpaid Orders Detected",
+            "message": f"{len(unpaid)} orders were created but haven't been paid yet.",
+            "suggested_action": "Show me the status of my recent unpaid orders.",
+        })
 
 
 # ── Helpers ─────────────────────────────────────────────────────────
